@@ -14,6 +14,12 @@ describe "empty db" do
     end
   end
 
+  context "ReferralHierarchy" do
+    it "sets table_name for the _hierarchy model" do
+      ReferralHierarchy.table_name.should == "referral_hierarchies"
+    end
+  end
+
   context "1 user db" do
     it "should return the only entity as a root and leaf" do
       a = User.create!(:email => "me@domain.com")

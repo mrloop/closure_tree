@@ -16,6 +16,12 @@ describe Label do
     end
   end
 
+  context "LabelHierarchy" do
+    it "sets table_name for the _hierarchy model" do
+      LabelHierarchy.table_name.should == "label_hierarchies"
+    end
+  end
+
   context "DateLabel" do
     it "should find or create by path" do
       date = DateLabel.find_or_create_by_path(%w{2011 November 23})
