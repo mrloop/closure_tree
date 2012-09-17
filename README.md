@@ -1,4 +1,4 @@
-# Closure Tree [![Build Status](https://secure.travis-ci.org/mceachen/closure_tree.png?branch=master)](http://travis-ci.org/mceachen/closure_tree)
+# Closure Tree
 
 Closure Tree is a mostly-API-compatible replacement for the
 [ancestry](https://github.com/stefankroes/ancestry),
@@ -17,6 +17,17 @@ Closure Tree is a mostly-API-compatible replacement for the
 See [Bill Karwin](http://karwin.blogspot.com/)'s excellent
 [Models for hierarchical data presentation](http://www.slideshare.net/billkarwin/models-for-hierarchical-data)
 for a description of different tree storage algorithms.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Usage](#usage)
+- [Accessing Data](#accessing-data)
+- [Polymorphic hierarchies with STI](#polymorphic-hierarchies-with-sti)
+- [Deterministic ordering](#deterministic-ordering)
+- [FAQ](#faq)
+- [Testing](#testing)
+- [Change log](#change-log)
 
 ## Installation
 
@@ -187,7 +198,8 @@ HT: [ancestry](https://github.com/stefankroes/ancestry#arrangement) and [elhoyos
 When you include ```acts_as_tree``` in your model, you can provide a hash to override the following defaults:
 
 * ```:parent_column_name``` to override the column name of the parent foreign key in the model's table. This defaults to "parent_id".
-* ```:hierarchy_table_name``` to override the hierarchy table name. This defaults to the singular name of the model + "_hierarchies".
+* ```:hierarchy_table_name``` to override the hierarchy class name. This defaults to the singular name of the model + "Hierarchy", like ```TagHierarchy```.
+* ```:hierarchy_table_name``` to override the hierarchy table name. This defaults to the singular name of the model + "_hierarchies", like ```tag_hierarchies```.
 * ```:dependent``` determines what happens when a node is destroyed. Defaults to ```nullify```.
     * ```:nullify``` will simply set the parent column to null. Each child node will be considered a "root" node. This is the default.
     * ```:delete_all``` will delete all descendant nodes (which circumvents the destroy hooks)
@@ -235,7 +247,7 @@ When you include ```acts_as_tree``` in your model, you can provide a hash to ove
     * ```tag.find_all_by_generation(2)``` will return the tag's grandchildren, and so on.
 * ```tag.destroy``` will destroy a node and do <em>something</em> to its children, which is determined by the ```:dependent``` option passed to ```acts_as_tree```.
 
-## <a id="sti"></a>Polymorphic hierarchies with STI
+## Polymorphic hierarchies with STI
 
 Polymorphic models using single table inheritance (STI) are supported:
 
@@ -288,38 +300,50 @@ When you enable ```order```, you'll also have the following new methods injected
 
 If your ```order``` column is an integer attribute, you'll also have these:
 
-* ```tag.add_sibling_before(sibling_node)``` which will
-  1. move ```tag``` to the same parent as ```sibling_node```,
-  2. decrement the sort_order values of the nodes before the ```sibling_node``` by one, and
-  3. set ```tag```'s order column to 1 less than the ```sibling_node```'s value.
+* ```node1.prepend_sibling(node2)``` which will
+  1. set ```node2``` to the same parent as ```node1```,
+  2. set ```node2```'s order column to 1 less than ```node1```'s value, and
+  3. decrement the order_column of all children of node1's parents whose order_column is <>>= node2's new value by 1.
 
-* ```tag.add_sibling_after(sibling_node)``` which will
-  1. move ```tag``` to the same parent as ```sibling_node```,
-  2. increment the sort_order values of the nodes after the ```sibling_node``` by one, and
-  3. set ```tag```'s order column to 1 more than the ```sibling_node```'s value.
+* ```node1.append_sibling(node2)``` which will
+  1. set ```node2``` to the same parent as ```node1```,
+  2. set ```node2```'s order column to 1 more than ```node1```'s value, and
+  3. increment the order_column of all children of node1's parents whose order_column is >= node2's new value by 1.
 
 ```ruby
+
 root = OrderedTag.create(:name => "root")
 a = OrderedTag.create(:name => "a", :parent => "root")
 b = OrderedTag.create(:name => "b")
 c = OrderedTag.create(:name => "c")
 
+# We have to call 'root.reload.children' because root won't be in sync with the database otherwise:
+
 a.append_sibling(b)
-root.children.collect(&:name)
+root.reload.children.collect(&:name)
 => ["a", "b"]
 
 a.prepend_sibling(b)
-root.children.collect(&:name)
+root.reload.children.collect(&:name)
 => ["b", "a"]
 
 a.append_sibling(c)
-root.children.collect(&:name)
-=> ["a", "c", "b"]
+root.reload.children.collect(&:name)
+=> ["b", "a", "c"]
 
 b.append_sibling(c)
-root.children.collect(&:name)
-=> ["a", "b", "c"]
+root.reload.children.collect(&:name)
+=> ["b", "c", "a"]
 ```
+
+## FAQ
+
+### Does this gem support multiple parents?
+
+No. This gem's API is based on the assumption that each node has either 0 or 1 parent.
+
+The underlying closure tree structure will support multiple parents, but there would be many
+breaking-API changes to support it. I'm open to suggestions and pull requests.
 
 ## Testing
 
@@ -331,10 +355,24 @@ Closure tree is [tested under every combination](http://travis-ci.org/#!/mceache
 
 ## Change log
 
-### 3.5.0
+### 3.6.1
+
+* Fixed [issue 20](https://github.com/mceachen/closure_tree/issues/20), which affected
+  deterministic ordering when siblings where different STI classes. Thanks, [edwinramirez](https://github.com/edwinramirez)!
+
+### 3.6.0
+
+Added support for:
+* ```:hierarchy_class_name``` as an option
+* ActiveRecord::Base.table_name_prefix
+* ActiveRecord::Base.table_name_suffix
+
+This addresses [issue 21](https://github.com/mceachen/closure_tree/issues/21). Thanks, [Judd Blair](https://github.com/juddblair)!
+
+### 3.5.2
 
 * Added ```find_all_by_generation```
-  for [feature request 17](https://github.com/mceachen/closure_tree/issues/17)).
+  for [feature request 17](https://github.com/mceachen/closure_tree/issues/17).
 
 ### 3.4.2
 
