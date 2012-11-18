@@ -46,23 +46,42 @@ module ClosureTree
       after_save :ct_after_save
       before_destroy :ct_before_destroy
 
-      belongs_to :parent,
-        :class_name => ct_class.to_s,
-        :foreign_key => parent_column_name
+#belongs_to :parent,
+#        :class_name => ct_class.to_s,
+#        :foreign_key => parent_column_name
 
-      attr_accessible :parent
+
+
+      has_many :parents,
+        :through => :ancestor_hierarchies,
+        :source => :ancestor,
+        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1],
+        :autosave => false
+
+#      attr_accessible :parentdd
+
+#      has_many :children, with_order_option(
+#        :class_name => ct_class.to_s,
+#          :foreign_key => parent_column_name,
+#          :dependent => closure_tree_options[:dependent]
+#      )
 
       has_many :children, with_order_option(
-        :class_name => ct_class.to_s,
-          :foreign_key => parent_column_name,
-          :dependent => closure_tree_options[:dependent]
+        :through => :descendant_hierarchies,
+        :source => :descendant,
+        :dependent => closure_tree_options[:dependent],
+        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1],
+        :autosave => false
       )
+
 
       has_many :ancestor_hierarchies,
         :class_name => hierarchy_class_name,
         :foreign_key => "descendant_id",
         :order => "#{quoted_hierarchy_table_name}.generations asc",
-        :dependent => :destroy
+        :dependent => :destroy,
+        :autosave => false
+
 
       has_many :self_and_ancestors,
         :through => :ancestor_hierarchies,
@@ -73,7 +92,10 @@ module ClosureTree
         :class_name => hierarchy_class_name,
         :foreign_key => "ancestor_id",
         :order => "#{quoted_hierarchy_table_name}.generations asc",
-        :dependent => :destroy
+        :dependent => :destroy,
+        :autosave => false
+
+
       # TODO: FIXME: this collection currently ignores sort_order
       # (because the quoted_table_named would need to be joined in to get to the order column)
 
@@ -83,7 +105,20 @@ module ClosureTree
         :order => append_order("#{quoted_hierarchy_table_name}.generations asc")
 
       def self.roots
-        where(parent_column_name => nil)
+        #http://stackoverflow.com/questions/4958570/how-to-find-distinct-root-nodes-of-newest-nodes-in-trees-hold-in-closure-table
+        joins(<<-SQL)
+          INNER JOIN (
+            SELECT a.id
+            FROM #{quoted_table_name} a LEFT OUTER JOIN 
+              (SELECT coo.descendant_id 	
+                     FROM #{quoted_hierarchy_table_name} ro LEFT OUTER JOIN #{quoted_hierarchy_table_name} coo
+                     ON coo.ancestor_id <> ro.descendant_id 
+                     AND coo.descendant_id = ro.descendant_id) lo
+            ON a.id = lo.descendant_id
+            WHERE lo.descendant_id IS NULL 
+            GROUP BY a.id
+          ) AS roots ON roots.id = #{quoted_table_name}.#{primary_key}
+        SQL
       end
 
       # Note that options[:limit_depth] defaults to 10. This might be crazy-big, depending on your tree shape.
@@ -155,7 +190,7 @@ module ClosureTree
 
     # Returns true if this node has no parents.
     def root?
-      ct_parent_id.nil?
+      parents.empty?
     end
 
     # Returns true if this node has a parent, and is not a root.
@@ -170,7 +205,7 @@ module ClosureTree
 
     # Returns the farthest ancestor, or self if +root?+
     def root
-      self_and_ancestors.where(parent_column_name.to_sym => nil).first
+      self_and_ancestors.last
     end
 
     def leaves
@@ -182,6 +217,14 @@ module ClosureTree
     end
 
     alias :level :depth
+
+    def parent
+      parents.first
+    end
+
+    def parent=(new_parent)
+      parents[0] = new_parent
+    end
 
     def ancestors
       without_self(self_and_ancestors)
@@ -283,17 +326,20 @@ module ClosureTree
       tree
     end
 
-    def ct_parent_id
-      read_attribute(parent_column_sym)
-    end
+#    def ct_parent_id
+#      read_attribute(parent_column_sym)
+#    end
 
     protected
 
     def ct_validate
-      if changes[parent_column_name] &&
-        parent.present? &&
-        parent.self_and_ancestors.include?(self)
-        errors.add(parent_column_sym, "You cannot add an ancestor as a descendant")
+      #TODO only validate if parents have changed
+      #TODO check for all parents
+      
+      for p in parents
+        if p.self_and_ancestors.include?(self)
+          errors.add(parent_column_sym, "You cannot add an ancestor as a descendant")
+        end
       end
     end
 
@@ -303,8 +349,12 @@ module ClosureTree
     end
 
     def ct_after_save
-      rebuild! if changes[parent_column_name] || @was_new_record
+      #TODO only rebuild! if any of the parents have changed
+      rebuild! if @was_new_record
       @was_new_record = false # we aren't new anymore.
+      #children.each(&:save)
+      #parents.each(&:save)
+
       true # don't cancel anything.
     end
 
@@ -312,15 +362,24 @@ module ClosureTree
       delete_hierarchy_references unless @was_new_record
       hierarchy_class.create!(:ancestor => self, :descendant => self, :generations => 0)
       unless root?
-        connection.execute <<-SQL
-          INSERT INTO #{quoted_hierarchy_table_name}
-            (ancestor_id, descendant_id, generations)
-          SELECT x.ancestor_id, #{id}, x.generations + 1
-          FROM #{quoted_hierarchy_table_name} x
-          WHERE x.descendant_id = #{self.ct_parent_id}
-        SQL
+        parents.each do | p |
+          connection.execute <<-SQL
+            INSERT INTO #{quoted_hierarchy_table_name}
+              (ancestor_id, descendant_id, generations)
+            SELECT x.ancestor_id, #{id} , x.generations + 1
+            FROM #{quoted_hierarchy_table_name} x
+            WHERE x.descendant_id = #{p.id}
+          SQL
+        end
       end
-      children.each { |c| c.rebuild! }
+      #if it is a new record and children << used association won't have been saved
+      children.each do |c|
+        if ! c.parents.include? self
+          c.parents << self 
+        end
+        #c.rebuild!
+        c.save!
+      end
     end
 
     def ct_before_destroy
@@ -335,16 +394,18 @@ module ClosureTree
       # It shouldn't affect performance of postgresql.
       # See http://dev.mysql.com/doc/refman/5.0/en/subquery-errors.html
       # Also: PostgreSQL doesn't support INNER JOIN on DELETE, so we can't use that.
-      connection.execute <<-SQL
-        DELETE FROM #{quoted_hierarchy_table_name}
-        WHERE descendant_id IN (
-          SELECT DISTINCT descendant_id
-          FROM ( SELECT descendant_id
-            FROM #{quoted_hierarchy_table_name}
-            WHERE ancestor_id = #{id}
-          ) AS x )
-          OR descendant_id = #{id}
-      SQL
+      if id
+        connection.execute <<-SQL
+          DELETE FROM #{quoted_hierarchy_table_name}
+          WHERE descendant_id IN (
+            SELECT DISTINCT descendant_id
+            FROM ( SELECT descendant_id
+              FROM #{quoted_hierarchy_table_name}
+              WHERE ancestor_id = #{id}
+            ) AS x )
+            OR descendant_id = #{id}
+        SQL
+      end
     end
 
     def without_self(scope)
@@ -360,7 +421,7 @@ module ClosureTree
     end
 
     # TODO: _parent_id will be removed in the next major version
-    alias :_parent_id :ct_parent_id
+    #alias :_parent_id :ct_parent_id
 
     module ClassMethods
 
@@ -400,14 +461,6 @@ module ClosureTree
   # Mixed into both classes and instances to provide easy access to the column names
   module Columns
 
-    def parent_column_name
-      closure_tree_options[:parent_column_name]
-    end
-
-    def parent_column_sym
-      parent_column_name.to_sym
-    end
-
     def has_name?
       ct_class.new.attributes.include? closure_tree_options[:name_column]
     end
@@ -436,10 +489,6 @@ module ClosureTree
 
     def quoted_hierarchy_table_name
       connection.quote_column_name hierarchy_table_name
-    end
-
-    def quoted_parent_column_name
-      connection.quote_column_name parent_column_name
     end
 
     def order_option

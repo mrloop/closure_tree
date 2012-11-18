@@ -14,7 +14,6 @@ ActiveRecord::Schema.define(:version => 0) do
   create_table "tags", :force => true do |t|
     t.string "name"
     t.string "title"
-    t.integer "parent_id"
     t.integer "sort_order"
     t.datetime "created_at"
     t.datetime "updated_at"
@@ -71,7 +70,6 @@ ActiveRecord::Schema.define(:version => 0) do
 
   create_table "cuisine_types", :force => true do |t|
     t.string "name"
-    t.integer "parent_id"
   end
 
   create_table "cuisine_type_hierarchies", :id => false, :force => true do |t|
