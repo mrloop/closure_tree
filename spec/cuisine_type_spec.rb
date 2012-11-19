@@ -15,7 +15,6 @@ describe CuisineType do
     m = CuisineType.new(:name => "m")
     e.children << m
     e.save
-    debugger
     assert_lineage(e, m)
   end
 

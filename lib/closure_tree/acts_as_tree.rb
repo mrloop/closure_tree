@@ -29,6 +29,26 @@ module ClosureTree
           comparison_object.instance_of?(self.class) &&
           self.attributes == comparison_object.attributes
         end
+
+        def save!(*)
+          true
+        end
+        def save!
+          true
+        end
+        def save(*)
+          true
+        end
+        def create!
+          true
+        end
+        def create
+          true
+        end
+        def update
+          true
+        end
+
         alias :eql? :==
       RUBY
 
@@ -55,8 +75,7 @@ module ClosureTree
       has_many :parents,
         :through => :ancestor_hierarchies,
         :source => :ancestor,
-        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1],
-        :autosave => false
+        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1]
 
 #      attr_accessible :parentdd
 
@@ -70,8 +89,7 @@ module ClosureTree
         :through => :descendant_hierarchies,
         :source => :descendant,
         :dependent => closure_tree_options[:dependent],
-        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1],
-        :autosave => false
+        :conditions => ["#{quoted_hierarchy_table_name}.generations = ?", 1]
       )
 
 
@@ -79,8 +97,7 @@ module ClosureTree
         :class_name => hierarchy_class_name,
         :foreign_key => "descendant_id",
         :order => "#{quoted_hierarchy_table_name}.generations asc",
-        :dependent => :destroy,
-        :autosave => false
+        :dependent => :destroy
 
 
       has_many :self_and_ancestors,
@@ -92,8 +109,7 @@ module ClosureTree
         :class_name => hierarchy_class_name,
         :foreign_key => "ancestor_id",
         :order => "#{quoted_hierarchy_table_name}.generations asc",
-        :dependent => :destroy,
-        :autosave => false
+        :dependent => :destroy
 
 
       # TODO: FIXME: this collection currently ignores sort_order
@@ -291,6 +307,8 @@ module ClosureTree
         unless child
           child = self.class.new(attributes.merge(attrs))
           node.children << child
+          #TODO save this shouldn't be required
+          node.save
         end
         node = child
       end
@@ -350,17 +368,18 @@ module ClosureTree
 
     def ct_after_save
       #TODO only rebuild! if any of the parents have changed
-      rebuild! if @was_new_record
+      rebuild!
       @was_new_record = false # we aren't new anymore.
-      #children.each(&:save)
-      #parents.each(&:save)
-
       true # don't cancel anything.
     end
 
     def rebuild!
       delete_hierarchy_references unless @was_new_record
-      hierarchy_class.create!(:ancestor => self, :descendant => self, :generations => 0)
+      connection.execute <<-SQL
+        INSERT INTO #{quoted_hierarchy_table_name}
+        (ancestor_id, descendant_id, generations)
+        VALUES ( #{id},#{id},0)
+      SQL
       unless root?
         parents.each do | p |
           connection.execute <<-SQL
@@ -380,7 +399,7 @@ module ClosureTree
         #c.rebuild!
         c.save!
       end
-    end
+     end
 
     def ct_before_destroy
       delete_hierarchy_references

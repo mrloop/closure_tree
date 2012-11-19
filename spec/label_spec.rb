@@ -10,12 +10,12 @@ describe Label do
     it "should find or create by path" do
       # class method:
       c = Label.find_or_create_by_path(%w{grandparent parent child})
+      debugger
       c.ancestry_path.should == %w{grandparent parent child}
       c.name.should == "child"
       c.parent.name.should == "parent"
     end
   end
-
   context "DateLabel" do
     it "should find or create by path" do
       date = DateLabel.find_or_create_by_path(%w{2011 November 23})
@@ -79,7 +79,7 @@ describe Label do
       @a2 = @b2.parent
       Label.update_all("sort_order = id")
     end
-
+
     it "finds roots from the class method" do
       Label.find_all_by_generation(0).to_a.should == [@a1, @a2]
     end
@@ -256,4 +256,6 @@ describe Label do
       labels(:a1).leaves.collect(&:name).should == %w(b2 e2 d2 c1-six c1-seven c1-eight c1-nine)
     end
   end
+
+
 end
